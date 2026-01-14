@@ -220,7 +220,7 @@ function App() {
 
               {/* キャラクターたち */}
               <div className="mb-8 flex gap-2 flex-wrap justify-center max-w-[280px]">
-                {collectedCharacters.slice(0, 6).map((cc, i) => {
+                {collectedCharacters.slice(0, 9).map((cc, i) => {
                   const char = getCharacterById(cc.characterId);
                   return char ? (
                     <div
@@ -232,9 +232,9 @@ function App() {
                     </div>
                   ) : null;
                 })}
-                {collectedCharacters.length > 6 && (
+                {collectedCharacters.length > 9 && (
                   <div className="w-12 h-12 bg-white/50 rounded-xl flex items-center justify-center text-sm font-bold text-white">
-                    +{collectedCharacters.length - 6}
+                    +{collectedCharacters.length - 9}
                   </div>
                 )}
               </div>
@@ -259,16 +259,16 @@ function App() {
         {/* ========== 読み練習画面（パート1） ========== */}
         {view === 'reading' && trainingQueue.length > 0 && (
           <div className="h-full bg-orange-50 p-6 flex flex-col relative">
-            {/* ホームボタン */}
+            {/* 戻るボタン */}
             <button
               onClick={() => {
                 if (window.confirm('練習をやめてホームに戻りますか？')) {
                   setView('home');
                 }
               }}
-              className="absolute top-4 right-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
+              className="absolute top-4 left-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
             >
-              <X size={20} />
+              <ArrowRight size={20} className="rotate-180" />
             </button>
 
             {/* プログレスバー */}
@@ -395,16 +395,16 @@ function App() {
         {/* ========== 書き練習画面（パート2） ========== */}
         {view === 'writing' && trainingQueue.length > 0 && (
           <div className="h-full bg-green-50 p-6 flex flex-col relative">
-            {/* ホームボタン */}
+            {/* 戻るボタン */}
             <button
               onClick={() => {
                 if (window.confirm('練習をやめてホームに戻りますか？')) {
                   setView('home');
                 }
               }}
-              className="absolute top-4 right-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
+              className="absolute top-4 left-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
             >
-              <X size={20} />
+              <ArrowRight size={20} className="rotate-180" />
             </button>
 
             {/* プログレスバー */}
@@ -649,9 +649,27 @@ function App() {
                     </button>
                   </div>
                   <div className="text-center">
-                    <div className="w-24 h-24 mx-auto bg-gradient-to-br from-purple-100 to-pink-100 rounded-2xl flex items-center justify-center text-6xl mb-4">
+                    <button
+                      onClick={() => {
+                        if (selectedCharacterDetail.sound) {
+                          // 泣き声を表示するアニメーション
+                          const soundEl = document.getElementById('character-sound');
+                          if (soundEl) {
+                            soundEl.textContent = selectedCharacterDetail.sound;
+                            soundEl.classList.remove('opacity-0');
+                            soundEl.classList.add('animate-bounce');
+                            setTimeout(() => {
+                              soundEl.classList.add('opacity-0');
+                              soundEl.classList.remove('animate-bounce');
+                            }, 1500);
+                          }
+                        }
+                      }}
+                      className="w-24 h-24 mx-auto bg-gradient-to-br from-purple-100 to-pink-100 rounded-2xl flex items-center justify-center text-6xl mb-4 hover:scale-110 transition-transform active:scale-95 cursor-pointer"
+                    >
                       {selectedCharacterDetail.image}
-                    </div>
+                    </button>
+                    <p id="character-sound" className="text-orange-500 font-black text-lg mb-2 opacity-0 transition-opacity"></p>
                     <p className="text-purple-500 text-sm font-bold">
                       No.{selectedCharacterDetail.id.split('-')[1]}
                     </p>

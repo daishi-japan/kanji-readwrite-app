@@ -14,6 +14,7 @@ export type Character = {
   name: string;        // キャラクター名
   image: string;       // 画像パス
   description: string; // ひとこと説明
+  sound?: string;      // 泣き声（オプション）
 };
 
 // ゲット済みキャラクター型
