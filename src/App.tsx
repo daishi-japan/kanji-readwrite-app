@@ -259,6 +259,18 @@ function App() {
         {/* ========== 読み練習画面（パート1） ========== */}
         {view === 'reading' && trainingQueue.length > 0 && (
           <div className="h-full bg-orange-50 p-6 flex flex-col relative">
+            {/* ホームボタン */}
+            <button
+              onClick={() => {
+                if (window.confirm('練習をやめてホームに戻りますか？')) {
+                  setView('home');
+                }
+              }}
+              className="absolute top-4 right-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
+            >
+              <X size={20} />
+            </button>
+
             {/* プログレスバー */}
             <div className="mb-2 flex items-center justify-between text-sm text-orange-600 font-bold">
               <span>パート1: よみ</span>
@@ -383,6 +395,18 @@ function App() {
         {/* ========== 書き練習画面（パート2） ========== */}
         {view === 'writing' && trainingQueue.length > 0 && (
           <div className="h-full bg-green-50 p-6 flex flex-col relative">
+            {/* ホームボタン */}
+            <button
+              onClick={() => {
+                if (window.confirm('練習をやめてホームに戻りますか？')) {
+                  setView('home');
+                }
+              }}
+              className="absolute top-4 right-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
+            >
+              <X size={20} />
+            </button>
+
             {/* プログレスバー */}
             <div className="mb-2 flex items-center justify-between text-sm text-green-600 font-bold">
               <span>パート2: かく</span>

@@ -1,128 +1,126 @@
 import type { Character } from '../types';
 
-// 20体のキャラクターデータ
-// 実際のアプリでは、AI生成画像を使用する
-// 現時点では絵文字をプレースホルダーとして使用
+// 20体のユニークな生き物キャラクターデータ
 export const CHARACTERS: Character[] = [
   {
     id: "char-001",
-    name: "ひよっこ",
-    image: "🐣",
-    description: "はじめてのなかま！いつもげんき！"
+    name: "ぴよまる",
+    image: "🐥",
+    description: "ちいさなヒヨコの勇者！"
   },
   {
     id: "char-002",
-    name: "もくもくん",
-    image: "☁️",
-    description: "くものようせい。ふわふわしてる。"
+    name: "ぺんぺん",
+    image: "🐧",
+    description: "南極からやってきたペンギン！"
   },
   {
     id: "char-003",
-    name: "ひだまりん",
-    image: "🌻",
-    description: "おひさまだいすき！あったかい。"
+    name: "かえるん",
+    image: "🐸",
+    description: "ケロケロ！いけのなかま。"
   },
   {
     id: "char-004",
-    name: "ほしまる",
-    image: "⭐",
-    description: "よぞらからきたキラキラ。"
+    name: "こあらっち",
+    image: "🐨",
+    description: "ユーカリがだいすき！"
   },
   {
     id: "char-005",
-    name: "にじいろん",
-    image: "🌈",
-    description: "あめのあとにあらわれる。"
+    name: "きつねん",
+    image: "🦊",
+    description: "もりのかしこいキツネ。"
   },
   {
     id: "char-006",
-    name: "もりのこ",
-    image: "🌲",
-    description: "しずかなもりにすんでいる。"
+    name: "らいおまる",
+    image: "🦁",
+    description: "ジャングルの王様！ガオー！"
   },
   {
     id: "char-007",
-    name: "おさかなん",
-    image: "🐟",
-    description: "うみがだいすき！すいすい。"
+    name: "ぞうぞう",
+    image: "🐘",
+    description: "ながい鼻が自まん！"
   },
   {
     id: "char-008",
-    name: "ねこまる",
-    image: "🐱",
-    description: "ひなたぼっこがとくい。"
+    name: "さるきち",
+    image: "🐵",
+    description: "バナナがだいすき！"
   },
   {
     id: "char-009",
-    name: "わんぽ",
-    image: "🐶",
-    description: "さんぽがだいすき！"
+    name: "ぶたまる",
+    image: "🐷",
+    description: "いつもにこにこ優しい子。"
   },
   {
     id: "char-010",
-    name: "うさぴょん",
-    image: "🐰",
-    description: "ぴょんぴょんはねる。"
+    name: "たこすけ",
+    image: "🐙",
+    description: "8本の足をもつ海の忍者！"
   },
   {
     id: "char-011",
-    name: "くまっち",
+    name: "くまごろう",
     image: "🐻",
-    description: "ちからもち！やさしいよ。"
+    description: "力持ちで優しい森の番人。"
   },
   {
     id: "char-012",
-    name: "ぱんだまる",
+    name: "ぱんだろう",
     image: "🐼",
-    description: "たけがすき。のんびりや。"
+    description: "竹を食べるのが趣味。"
   },
   {
     id: "char-013",
-    name: "おはなちゃん",
-    image: "🌸",
-    description: "はるになるとさく。"
+    name: "とらきち",
+    image: "🐯",
+    description: "しましま模様がかっこいい！"
   },
   {
     id: "char-014",
-    name: "ゆきだるん",
-    image: "⛄",
-    description: "ふゆがだいすき！つめたい。"
+    name: "うしまる",
+    image: "🐮",
+    description: "モーモー！牧場のなかま。"
   },
   {
     id: "char-015",
-    name: "かみなりくん",
-    image: "⚡",
-    description: "ゴロゴロ！びりびり！"
+    name: "ひつじん",
+    image: "🐑",
+    description: "もふもふの毛がじまん！"
   },
   {
     id: "char-016",
-    name: "つきうさぎ",
-    image: "🌙",
-    description: "よるになるとあらわれる。"
+    name: "かめきち",
+    image: "🐢",
+    description: "のんびり屋だけど長生き。"
   },
   {
     id: "char-017",
-    name: "りんごん",
-    image: "🍎",
-    description: "まっかでおいしそう。"
+    name: "へびすけ",
+    image: "🐍",
+    description: "にょろにょろ動くよ！"
   },
   {
     id: "char-018",
-    name: "ロケットん",
-    image: "🚀",
-    description: "うちゅうをめざす！"
+    name: "いるかん",
+    image: "🐬",
+    description: "ジャンプが得意な海の王子！"
   },
   {
     id: "char-019",
-    name: "おんぷちゃん",
-    image: "🎵",
-    description: "うたがだいすき！"
+    name: "くじらまる",
+    image: "🐋",
+    description: "海で一番大きな仲間！"
   },
   {
     id: "char-020",
-    name: "にじドラゴン",
-    image: "🐉",
-    description: "でんせつのキャラクター！"
+    name: "ドラゴまる",
+    image: "🐲",
+    description: "伝説の最強ドラゴン！"
   }
 ];
 
