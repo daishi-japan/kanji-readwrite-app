@@ -1,10 +1,12 @@
 import { useState, useCallback } from 'react';
 import {
   Sword, BookOpen, Book, History, Settings, X, CheckCircle,
-  ArrowRight, CheckSquare, Square, Fingerprint, Sparkles
+  ArrowRight, CheckSquare, Square, Pencil, Sparkles
 } from 'lucide-react';
-import type { ViewType, KanjiData, CollectedCharacter, HistoryRecord, Character } from './types';
+import type { ViewType, KanjiData, CollectedCharacter, HistoryRecord, Character, RewardPool } from './types';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import { use8BitVoice } from './hooks/use8BitVoice';
+import { useFeedbackSounds } from './hooks/useFeedbackSounds';
 import { GRADE_1_KANJI, getKanjiByGrade, selectRandomKanji } from './data/kanji';
 import { CHARACTERS, getCharacterById, getRandomUnownedCharacter, TOTAL_CHARACTER_COUNT } from './data/characters';
 import { StrokeOrderAnimation } from './components/StrokeOrderAnimation';
@@ -24,10 +26,25 @@ function App() {
     'kanji-app-active-kanji',
     GRADE_1_KANJI.map(k => k.char)
   );
+  const [rewardPool, setRewardPool] = useLocalStorage<RewardPool>(
+    'kanji-app-reward-pool',
+    {
+      rewards: ['アイスクリーム', '映画鑑賞', 'ゲーム30分'],
+      usedRewards: []
+    }
+  );
+
+  // ========== 音声再生 ==========
+  const { play8BitSound } = use8BitVoice();
+  const { playCorrectSound, playIncorrectSound } = useFeedbackSounds();
 
   // ========== UI状態 ==========
   const [view, setView] = useState<ViewType>('home');
   const [settingTabGrade, setSettingTabGrade] = useState(1);
+  const [settingsTab, setSettingsTab] = useState<'kanji' | 'rewards'>('kanji');
+  const [historyViewMode, setHistoryViewMode] = useState<'calendar' | 'list'>('list');
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const [encouragingMessage, setEncouragingMessage] = useState<string | null>(null);
 
   // ========== トレーニング状態 ==========
   const [trainingQueue, setTrainingQueue] = useState<KanjiData[]>([]);
@@ -42,6 +59,10 @@ function App() {
 
   // ========== ゲット演出状態 ==========
   const [newCharacter, setNewCharacter] = useState<Character | null>(null);
+
+  // ========== ご褒美ポップアップ状態 ==========
+  const [showRewardPopup, setShowRewardPopup] = useState(false);
+  const [currentReward, setCurrentReward] = useState<string | null>(null);
   const [isRevealed, setIsRevealed] = useState(false);
 
   // ========== ヘルパー関数 ==========
@@ -49,6 +70,77 @@ function App() {
     const d = new Date();
     return `${d.getMonth() + 1}/${d.getDate()}`;
   };
+
+  // ========== 応援メッセージ ==========
+  const PRAISE_MESSAGES = [
+    'すごい！',
+    'やったね！',
+    'さすが！',
+    'よくできました！',
+    'かんぺき！',
+    'すばらしい！'
+  ];
+
+  const ENCOURAGING_MESSAGES = [
+    'がんばれ！',
+    'つぎはできるよ！',
+    'おしい！',
+    'もういちど！',
+    'あきらめないで！',
+    'がんばって！'
+  ];
+
+  const getRandomMessage = (messages: string[]) => {
+    return messages[Math.floor(Math.random() * messages.length)];
+  };
+
+  // 日付ごとにグループ化
+  type GroupedHistory = {
+    date: string;
+    records: HistoryRecord[];
+    correctCount: number;
+    totalCount: number;
+  };
+
+  const groupHistoryByDate = (history: HistoryRecord[]): GroupedHistory[] => {
+    const grouped = new Map<string, HistoryRecord[]>();
+
+    history.forEach(record => {
+      if (!grouped.has(record.date)) {
+        grouped.set(record.date, []);
+      }
+      grouped.get(record.date)!.push(record);
+    });
+
+    return Array.from(grouped.entries()).map(([date, records]) => ({
+      date,
+      records,
+      correctCount: records.filter(r => r.result === 'correct').length,
+      totalCount: records.length
+    }));
+  };
+
+  // ランダムご褒美選択（使用済み除外）
+  const selectRandomReward = useCallback((): string | null => {
+    const availableRewards = rewardPool.rewards.filter(
+      r => !rewardPool.usedRewards.includes(r)
+    );
+
+    if (availableRewards.length === 0) {
+      return null; // 全て使い切った
+    }
+
+    const randomIndex = Math.floor(Math.random() * availableRewards.length);
+    const selectedReward = availableRewards[randomIndex];
+
+    // 使用済みに追加
+    setRewardPool({
+      ...rewardPool,
+      usedRewards: [...rewardPool.usedRewards, selectedReward]
+    });
+
+    return selectedReward;
+  }, [rewardPool, setRewardPool]);
 
   // ========== トレーニング開始 ==========
   const startTraining = useCallback(() => {
@@ -83,11 +175,15 @@ function App() {
     }, ...prev.slice(0, 499)]); // 最大500件
 
     if (isCorrect) {
+      // 正解時: 効果音と褒めメッセージ
+      playCorrectSound();
+      setEncouragingMessage(getRandomMessage(PRAISE_MESSAGES));
       setFeedback('correct');
       setCorrectCount(prev => prev + 1);
       setTimeout(() => {
         setFeedback('none');
         setSelectedAnswer(null);
+        setEncouragingMessage(null);
         if (trainIndex < trainingQueue.length - 1) {
           setTrainIndex(prev => prev + 1);
         } else {
@@ -96,14 +192,18 @@ function App() {
         }
       }, 1200);
     } else {
+      // 不正解時: ブザー音と応援メッセージ
+      playIncorrectSound();
+      setEncouragingMessage(getRandomMessage(ENCOURAGING_MESSAGES));
       setFeedback('incorrect');
     }
-  }, [feedback, trainIndex, trainingQueue, setHistory]);
+  }, [feedback, trainIndex, trainingQueue, setHistory, playCorrectSound, playIncorrectSound]);
 
   // 不正解後に次へ進む
   const handleNextFromIncorrect = useCallback(() => {
     setFeedback('none');
     setSelectedAnswer(null);
+    setEncouragingMessage(null);
     if (trainIndex < trainingQueue.length - 1) {
       setTrainIndex(prev => prev + 1);
     } else {
@@ -135,12 +235,26 @@ function App() {
   const revealCharacter = useCallback(() => {
     setIsRevealed(true);
     if (newCharacter) {
-      setCollectedCharacters(prev => [
-        ...prev,
+      const updatedCollected = [
+        ...collectedCharacters,
         { characterId: newCharacter.id, collectedAt: new Date().toISOString() }
-      ]);
+      ];
+      setCollectedCharacters(updatedCollected);
+
+      // 20個ごとのご褒美チェック
+      const uniqueCollected = [...new Set(updatedCollected.map(c => c.characterId))].length;
+      if (uniqueCollected % 20 === 0 && uniqueCollected > 0) {
+        const reward = selectRandomReward();
+        if (reward) {
+          setCurrentReward(reward);
+          // キャラクター演出が終わった後にご褒美ポップアップを表示
+          setTimeout(() => {
+            setShowRewardPopup(true);
+          }, 2000);
+        }
+      }
     }
-  }, [newCharacter, setCollectedCharacters]);
+  }, [newCharacter, collectedCharacters, setCollectedCharacters, selectRandomReward]);
 
   // ========== 設定関連 ==========
   const isAllGradeSelected = (grade: number) => {
@@ -291,6 +405,11 @@ function App() {
                   <div className="absolute inset-0 z-20 bg-green-500/90 flex flex-col items-center justify-center animate-pop-in rounded-[24px]">
                     <CheckCircle size={80} className="text-white mb-2" />
                     <h3 className="text-4xl font-black text-white">せいかい！</h3>
+                    {encouragingMessage && (
+                      <p className="text-2xl font-black text-white mt-3 animate-bounce">
+                        {encouragingMessage}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -298,7 +417,12 @@ function App() {
                 {feedback === 'incorrect' && (
                   <div className="absolute inset-0 z-20 bg-red-500/95 flex flex-col items-center justify-center animate-pop-in rounded-[24px] p-4 text-center">
                     <X size={80} className="text-white mb-2" />
-                    <h3 className="text-3xl font-black text-white mb-4">ざんねん...</h3>
+                    <h3 className="text-3xl font-black text-white mb-2">ざんねん...</h3>
+                    {encouragingMessage && (
+                      <p className="text-2xl font-black text-white mb-4 animate-pulse">
+                        {encouragingMessage}
+                      </p>
+                    )}
                     <div className="bg-white rounded-xl p-4 w-full mb-6">
                       <p className="text-gray-500 font-bold text-sm">ただしい よみかた</p>
                       <p className="text-4xl font-black text-red-500">
@@ -438,7 +562,7 @@ function App() {
                     onClick={() => setShowStrokeModal(true)}
                     className="absolute -bottom-4 -right-4 bg-blue-500 text-white p-3 rounded-full shadow-lg hover:bg-blue-600 transition-transform active:scale-90 flex flex-col items-center justify-center w-16 h-16 border-4 border-white z-20"
                   >
-                    <Fingerprint size={20} />
+                    <Pencil size={20} />
                     <span className="text-[10px] font-bold leading-none mt-1">書き順</span>
                   </button>
                 </div>
@@ -622,7 +746,17 @@ function App() {
                           </span>
                         </>
                       ) : (
-                        <span className="text-2xl text-gray-400">？</span>
+                        <div className="relative flex items-center justify-center w-full h-full">
+                          <span
+                            className="text-3xl"
+                            style={{ filter: 'brightness(0) opacity(0.3)' }}
+                          >
+                            {char.image}
+                          </span>
+                          <span className="absolute text-xs text-gray-500 font-bold">
+                            ?
+                          </span>
+                        </div>
                       )}
                     </button>
                   );
@@ -663,6 +797,9 @@ function App() {
                               soundEl.classList.remove('animate-bounce');
                             }, 1500);
                           }
+
+                          // 8bit音声を再生
+                          play8BitSound(selectedCharacterDetail.id);
                         }
                       }}
                       className="w-24 h-24 mx-auto bg-gradient-to-br from-purple-100 to-pink-100 rounded-2xl flex items-center justify-center text-6xl mb-4 hover:scale-110 transition-transform active:scale-95 cursor-pointer"
@@ -679,6 +816,17 @@ function App() {
                     <p className="text-gray-500">
                       {selectedCharacterDetail.description}
                     </p>
+
+                    {/* プロフィールセクション */}
+                    <div className="mt-4 space-y-2 text-left">
+                      <h3 className="font-bold text-pink-600 text-center">📖 プロフィール</h3>
+                      <div className="bg-pink-50 p-3 rounded-lg space-y-1 text-sm">
+                        <p><span className="font-semibold">🎈 好きなこと:</span> {selectedCharacterDetail.profile.hobbies}</p>
+                        <p><span className="font-semibold">💦 苦手なこと:</span> {selectedCharacterDetail.profile.dislikes}</p>
+                        <p><span className="font-semibold">✨ 特技:</span> {selectedCharacterDetail.profile.specialSkill}</p>
+                      </div>
+                    </div>
+
                     {(() => {
                       const cc = collectedCharacters.find(c => c.characterId === selectedCharacterDetail.id);
                       if (cc) {
@@ -714,7 +862,7 @@ function App() {
                   <X size={20} />
                 </button>
               </div>
-              <div className="flex gap-4 text-sm">
+              <div className="flex gap-4 text-sm mb-4">
                 <div className="bg-blue-600 px-3 py-1 rounded-lg">
                   <span className="block text-xs opacity-70">ぜんぶで</span>
                   <span className="font-bold text-lg">{history.length}問</span>
@@ -726,9 +874,33 @@ function App() {
                   </span>
                 </div>
               </div>
+
+              {/* タブ切り替え */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setHistoryViewMode('list')}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                    historyViewMode === 'list'
+                      ? 'bg-white text-blue-600'
+                      : 'bg-white/20 text-white/80 hover:bg-white/30'
+                  }`}
+                >
+                  📝 リスト
+                </button>
+                <button
+                  onClick={() => setHistoryViewMode('calendar')}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                    historyViewMode === 'calendar'
+                      ? 'bg-white text-blue-600'
+                      : 'bg-white/20 text-white/80 hover:bg-white/30'
+                  }`}
+                >
+                  📅 カレンダー
+                </button>
+              </div>
             </div>
 
-            {/* 履歴リスト */}
+            {/* 履歴表示 */}
             <div className="flex-1 overflow-y-auto p-4">
               {history.length === 0 ? (
                 <div className="text-center text-gray-400 mt-20">
@@ -736,32 +908,75 @@ function App() {
                   <p className="text-sm">トレーニングをするとここに表示されます</p>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {history.map((record, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-white p-3 rounded-xl flex items-center justify-between shadow-sm border border-gray-100"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">
-                          {record.date}
+                <>
+                  {/* リストモード */}
+                  {historyViewMode === 'list' && (
+                    <div className="space-y-2">
+                      {history.map((record, idx) => (
+                        <div
+                          key={idx}
+                          className={`p-3 rounded-lg flex items-center justify-between ${
+                            record.result === 'correct'
+                              ? 'bg-green-50 border-l-4 border-green-500'
+                              : 'bg-red-50 border-l-4 border-red-500'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl font-bold">{record.char}</span>
+                            <span className="text-sm text-gray-600">{record.date}</span>
+                          </div>
+                          <span className="text-xl">
+                            {record.result === 'correct' ? '✓' : '✗'}
+                          </span>
                         </div>
-                        <div className="text-2xl font-serif text-gray-800">
-                          {record.char}
-                        </div>
-                      </div>
-                      {record.result === 'correct' ? (
-                        <span className="text-green-500 font-bold flex items-center gap-1 text-sm">
-                          <CheckCircle size={16} /> 正解
-                        </span>
-                      ) : (
-                        <span className="text-red-400 font-bold flex items-center gap-1 text-sm">
-                          <X size={16} /> 復習
-                        </span>
-                      )}
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  )}
+
+                  {/* カレンダーモード */}
+                  {historyViewMode === 'calendar' && (
+                    <div className="space-y-3">
+                      {groupHistoryByDate(history).map((group, idx) => (
+                        <div key={idx} className="bg-white rounded-lg overflow-hidden shadow-sm">
+                          {/* 日付ヘッダー（クリック可能） */}
+                          <button
+                            onClick={() => setExpandedDate(expandedDate === group.date ? null : group.date)}
+                            className="w-full flex items-center justify-between p-4 bg-blue-100 hover:bg-blue-200 transition-colors"
+                          >
+                            <div className="text-left">
+                              <span className="font-bold text-lg text-gray-800">{group.date}</span>
+                              <span className="ml-3 text-sm text-gray-600">
+                                {group.correctCount}/{group.totalCount} 正解
+                              </span>
+                            </div>
+                            <span className="text-2xl text-gray-600">
+                              {expandedDate === group.date ? '▲' : '▼'}
+                            </span>
+                          </button>
+
+                          {/* 展開時の漢字グリッド */}
+                          {expandedDate === group.date && (
+                            <div className="p-4 grid grid-cols-5 gap-2">
+                              {group.records.map((record, i) => (
+                                <div
+                                  key={i}
+                                  className={`p-3 rounded-lg text-center font-bold text-xl ${
+                                    record.result === 'correct'
+                                      ? 'bg-green-100 text-green-700'
+                                      : 'bg-red-100 text-red-700'
+                                  }`}
+                                  title={`${record.char} - ${record.result === 'correct' ? '正解' : '不正解'}`}
+                                >
+                                  {record.char}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -774,7 +989,7 @@ function App() {
             <div className="bg-gray-800 text-white p-6 pb-8 rounded-b-[30px] shadow-lg">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-bold flex items-center gap-2">
-                  <Settings className="text-gray-300" /> 漢字設定
+                  <Settings className="text-gray-300" /> 保護者設定
                 </h2>
                 <button
                   onClick={() => setView('home')}
@@ -783,84 +998,220 @@ function App() {
                   <X size={20} />
                 </button>
               </div>
-              <p className="text-gray-300 text-xs">
-                出題する漢字を選んでください。<br />
-                ※現在は1年生の80字に対応しています。
-              </p>
-            </div>
 
-            {/* 学年タブ */}
-            <div className="flex overflow-x-auto px-4 pt-4 gap-2 bg-slate-50 border-b border-slate-200">
-              {[1, 2, 3, 4, 5, 6].map((grade) => (
+              {/* タブ切り替え */}
+              <div className="flex gap-2">
                 <button
-                  key={grade}
-                  onClick={() => setSettingTabGrade(grade)}
-                  className={`
-                    px-4 py-2 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap
-                    ${settingTabGrade === grade
-                      ? 'bg-white text-blue-600 border-t-4 border-blue-500 shadow-sm'
-                      : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}
-                  `}
+                  onClick={() => setSettingsTab('kanji')}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                    settingsTab === 'kanji'
+                      ? 'bg-white text-gray-800'
+                      : 'bg-white/20 text-gray-300 hover:bg-white/30'
+                  }`}
                 >
-                  {grade}年生
+                  📝 漢字設定
                 </button>
-              ))}
-            </div>
-
-            {/* 漢字グリッド */}
-            <div className="flex-1 overflow-y-auto p-4 bg-white">
-              <div className="flex justify-between items-center mb-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
-                <span className="font-bold text-blue-800 text-sm">
-                  {settingTabGrade}年生の漢字
-                  <span className="text-[10px] ml-2 bg-blue-200 px-2 py-1 rounded-full text-blue-900">
-                    全{getKanjiByGrade(settingTabGrade).length}文字
-                  </span>
-                </span>
                 <button
-                  onClick={() => toggleGradeAll(settingTabGrade)}
-                  className={`
-                    flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs transition-colors shadow-sm
-                    ${isAllGradeSelected(settingTabGrade)
-                      ? 'bg-blue-500 text-white hover:bg-blue-600'
-                      : 'bg-white text-blue-500 border border-blue-300 hover:bg-blue-50'}
-                  `}
+                  onClick={() => setSettingsTab('rewards')}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                    settingsTab === 'rewards'
+                      ? 'bg-white text-gray-800'
+                      : 'bg-white/20 text-gray-300 hover:bg-white/30'
+                  }`}
                 >
-                  {isAllGradeSelected(settingTabGrade) ? <CheckSquare size={14} /> : <Square size={14} />}
-                  {isAllGradeSelected(settingTabGrade) ? '全解除' : '全選択'}
+                  🎁 ご褒美設定
                 </button>
               </div>
+            </div>
 
-              {getKanjiByGrade(settingTabGrade).length > 0 ? (
-                <div className="grid grid-cols-5 gap-2">
-                  {getKanjiByGrade(settingTabGrade).map((kanji) => {
-                    const isActive = activeKanjiChars.includes(kanji.char);
-                    return (
-                      <button
-                        key={kanji.char}
-                        onClick={() => toggleKanji(kanji.char)}
-                        className={`
-                          aspect-square rounded-lg flex flex-col items-center justify-center border transition-all relative
-                          ${isActive
-                            ? 'bg-white border-blue-500 shadow-sm text-gray-900'
-                            : 'bg-slate-50 border-slate-100 text-gray-300'}
-                        `}
-                      >
-                        <span className="text-xl font-serif">{kanji.char}</span>
-                        {isActive && (
-                          <div className="absolute top-0.5 right-0.5">
-                            <div className="w-2 h-2 bg-blue-500 rounded-full" />
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
+            {/* 漢字設定タブ */}
+            {settingsTab === 'kanji' && (
+              <>
+                {/* 学年タブ */}
+                <div className="flex overflow-x-auto px-4 pt-4 gap-2 bg-slate-50 border-b border-slate-200">
+                  {[1, 2, 3, 4, 5, 6].map((grade) => (
+                    <button
+                      key={grade}
+                      onClick={() => setSettingTabGrade(grade)}
+                      className={`
+                        px-4 py-2 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap
+                        ${settingTabGrade === grade
+                          ? 'bg-white text-blue-600 border-t-4 border-blue-500 shadow-sm'
+                          : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}
+                      `}
+                    >
+                      {grade}年生
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                <div className="text-center py-10 text-gray-400">
-                  <p className="font-bold">データ準備中...</p>
-                  <p className="text-sm mt-2">2〜6年生の漢字は今後追加予定です</p>
+
+                {/* 漢字グリッド */}
+                <div className="flex-1 overflow-y-auto p-4 bg-white">
+                  <div className="flex justify-between items-center mb-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
+                    <span className="font-bold text-blue-800 text-sm">
+                      {settingTabGrade}年生の漢字
+                      <span className="text-[10px] ml-2 bg-blue-200 px-2 py-1 rounded-full text-blue-900">
+                        全{getKanjiByGrade(settingTabGrade).length}文字
+                      </span>
+                    </span>
+                    <button
+                      onClick={() => toggleGradeAll(settingTabGrade)}
+                      className={`
+                        flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs transition-colors shadow-sm
+                        ${isAllGradeSelected(settingTabGrade)
+                          ? 'bg-blue-500 text-white hover:bg-blue-600'
+                          : 'bg-white text-blue-500 border border-blue-300 hover:bg-blue-50'}
+                      `}
+                    >
+                      {isAllGradeSelected(settingTabGrade) ? <CheckSquare size={14} /> : <Square size={14} />}
+                      {isAllGradeSelected(settingTabGrade) ? '全解除' : '全選択'}
+                    </button>
+                  </div>
+
+                  {getKanjiByGrade(settingTabGrade).length > 0 ? (
+                    <div className="grid grid-cols-5 gap-2">
+                      {getKanjiByGrade(settingTabGrade).map((kanji) => {
+                        const isActive = activeKanjiChars.includes(kanji.char);
+                        return (
+                          <button
+                            key={kanji.char}
+                            onClick={() => toggleKanji(kanji.char)}
+                            className={`
+                              aspect-square rounded-lg flex flex-col items-center justify-center border transition-all relative
+                              ${isActive
+                                ? 'bg-white border-blue-500 shadow-sm text-gray-900'
+                                : 'bg-slate-50 border-slate-100 text-gray-300'}
+                            `}
+                          >
+                            <span className="text-xl font-serif">{kanji.char}</span>
+                            {isActive && (
+                              <div className="absolute top-0.5 right-0.5">
+                                <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-10 text-gray-400">
+                      <p className="font-bold">データ準備中...</p>
+                      <p className="text-sm mt-2">2〜6年生の漢字は今後追加予定です</p>
+                    </div>
+                  )}
                 </div>
-              )}
+              </>
+            )}
+
+            {/* ご褒美設定タブ */}
+            {settingsTab === 'rewards' && (
+              <div className="flex-1 overflow-y-auto p-6 bg-white">
+                <h3 className="font-bold text-lg mb-4 text-gray-800">🎁 ご褒美プール設定</h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  20個キャラクターを集めるたびに、ランダムで1つのご褒美が表示されます。<br />
+                  （一度表示されたご褒美は次回以降表示されません）
+                </p>
+
+                {/* 新規ご褒美追加 */}
+                <div className="mb-6">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    ➕ 新しいご褒美を追加
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="例: アイスクリーム、公園で遊ぶ..."
+                    className="border-2 border-gray-300 p-3 rounded-lg w-full focus:border-pink-500 focus:outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                        setRewardPool({
+                          ...rewardPool,
+                          rewards: [...rewardPool.rewards, e.currentTarget.value.trim()]
+                        });
+                        e.currentTarget.value = '';
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Enterキーで追加</p>
+                </div>
+
+                {/* ご褒美リスト */}
+                <div className="space-y-2 mb-6">
+                  <h4 className="font-semibold text-gray-700 mb-3">登録済みご褒美</h4>
+                  {rewardPool.rewards.length === 0 ? (
+                    <p className="text-gray-400 text-center py-8">まだご褒美が登録されていません</p>
+                  ) : (
+                    rewardPool.rewards.map((reward, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-gray-50 p-4 rounded-lg border border-gray-200">
+                        <span className={`flex-1 ${rewardPool.usedRewards.includes(reward) ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                          {reward}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {rewardPool.usedRewards.includes(reward) && (
+                            <span className="text-xs text-green-600 font-semibold bg-green-100 px-2 py-1 rounded">
+                              ✓ 使用済み
+                            </span>
+                          )}
+                          <button
+                            onClick={() => {
+                              setRewardPool({
+                                ...rewardPool,
+                                rewards: rewardPool.rewards.filter((_, i) => i !== idx),
+                                usedRewards: rewardPool.usedRewards.filter(r => r !== reward)
+                              });
+                            }}
+                            className="text-red-500 hover:text-red-700 font-semibold px-3 py-1 rounded hover:bg-red-50 transition-colors text-sm"
+                          >
+                            削除
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* リセットボタン */}
+                {rewardPool.usedRewards.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm('使用履歴をリセットしますか？全てのご褒美が再び表示されるようになります。')) {
+                        setRewardPool({ ...rewardPool, usedRewards: [] });
+                      }
+                    }}
+                    className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold px-4 py-3 rounded-lg transition-colors"
+                  >
+                    🔄 使用履歴をリセット
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========== ご褒美ポップアップ ========== */}
+        {showRewardPopup && currentReward && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
+            <div className="bg-gradient-to-b from-yellow-300 to-yellow-400 p-8 rounded-3xl shadow-2xl max-w-md mx-4 text-center animate-pop-in">
+              <div className="text-6xl mb-4 animate-bounce">🎉</div>
+              <h2 className="text-3xl font-black text-yellow-900 mb-2">
+                すごい！
+              </h2>
+              <p className="text-yellow-800 font-bold text-lg mb-4">
+                20個達成おめでとう！
+              </p>
+              <div className="bg-white p-6 rounded-2xl my-4 shadow-inner">
+                <p className="text-4xl mb-3">🎁</p>
+                <p className="text-2xl font-bold text-gray-800 mb-1">{currentReward}</p>
+                <p className="text-sm text-gray-500">をゲット！</p>
+              </div>
+              <p className="text-yellow-800 text-sm mb-4">
+                がんばったごほうびだよ！
+              </p>
+              <button
+                onClick={() => setShowRewardPopup(false)}
+                className="bg-pink-500 hover:bg-pink-600 text-white font-bold text-lg py-3 px-8 rounded-full transition-colors shadow-lg"
+              >
+                やったー！
+              </button>
             </div>
           </div>
         )}

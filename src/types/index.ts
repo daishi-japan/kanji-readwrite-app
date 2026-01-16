@@ -15,6 +15,11 @@ export type Character = {
   image: string;       // 画像パス
   description: string; // ひとこと説明
   sound?: string;      // 泣き声（オプション）
+  profile: {
+    hobbies: string;      // 好きな活動・趣味
+    dislikes: string;     // 嫌いなこと
+    specialSkill: string; // 特技
+  };
 };
 
 // ゲット済みキャラクター型
@@ -40,6 +45,12 @@ export type ViewType =
   | 'collection'   // ずかん
   | 'history'      // 学習履歴
   | 'settings';    // 保護者設定
+
+// ご褒美プール型
+export type RewardPool = {
+  rewards: string[];      // 保護者が入力したご褒美リスト
+  usedRewards: string[];  // 既に使用したご褒美
+};
 
 // アプリ全体の状態
 export type AppState = {
