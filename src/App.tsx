@@ -1,14 +1,15 @@
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
-  Sword, BookOpen, Book, History, Settings, X, CheckCircle,
-  ArrowRight, CheckSquare, Square, Pencil, Sparkles
+  BookOpen, Book, History, Settings, X, CheckCircle,
+  ArrowRight, CheckSquare, Square, Pencil, Sparkles, TrendingUp, Apple
 } from 'lucide-react';
-import type { ViewType, KanjiData, CollectedCharacter, HistoryRecord, Character, RewardPool } from './types';
+import type { ViewType, KanjiData, CollectedCharacter, HistoryRecord, Character, RewardPool, TrainingMode, FoodItem, Inventory } from './types';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { use8BitVoice } from './hooks/use8BitVoice';
 import { useFeedbackSounds } from './hooks/useFeedbackSounds';
 import { GRADE_1_KANJI, getKanjiByGrade, selectRandomKanji } from './data/kanji';
-import { CHARACTERS, getCharacterById, getRandomUnownedCharacter, TOTAL_CHARACTER_COUNT } from './data/characters';
+import { CHARACTERS, getCharacterById, getRandomUnownedCharacter, TOTAL_CHARACTER_COUNT, getNextEvolution, canEvolve, getEvolutionChain } from './data/characters';
+import { selectRandomFood, FOODS } from './data/foods';
 import { StrokeOrderAnimation } from './components/StrokeOrderAnimation';
 import { Confetti } from './components/Confetti';
 
@@ -33,6 +34,27 @@ function App() {
       usedRewards: []
     }
   );
+  const [inventory, setInventory] = useLocalStorage<Inventory>(
+    'kanji-app-inventory',
+    {}
+  );
+
+  // ========== LocalStorage マイグレーション ==========
+  // 既存のCollectedCharacterデータにevolutionLevel, trainingCountを追加
+  useState(() => {
+    const needsMigration = collectedCharacters.some(
+      c => !('evolutionLevel' in c) || !('trainingCount' in c)
+    );
+
+    if (needsMigration) {
+      const migrated = collectedCharacters.map(c => ({
+        ...c,
+        evolutionLevel: ('evolutionLevel' in c) ? c.evolutionLevel : 0 as 0 | 1 | 2,
+        trainingCount: ('trainingCount' in c) ? c.trainingCount : 0
+      }));
+      setCollectedCharacters(migrated);
+    }
+  });
 
   // ========== 音声再生 ==========
   const { play8BitSound } = use8BitVoice();
@@ -65,10 +87,44 @@ function App() {
   const [currentReward, setCurrentReward] = useState<string | null>(null);
   const [isRevealed, setIsRevealed] = useState(false);
 
+  // ========== 進化システム状態 ==========
+  const [trainingMode, setTrainingMode] = useState<TrainingMode>('getNew');
+  const [selectedCharacterForTraining, setSelectedCharacterForTraining] = useState<Character | null>(null);
+  const [evolvingCharacter, setEvolvingCharacter] = useState<{ from: Character; to: Character } | null>(null);
+  const [evolutionPhase, setEvolutionPhase] = useState<'flash' | 'transform' | 'reveal' | 'complete'>('flash');
+
+  // ========== 餌システム状態 ==========
+  const [showFoodModal, setShowFoodModal] = useState(false);
+  const [acquiredFood, setAcquiredFood] = useState<FoodItem | null>(null);
+
+  // ========== 餌やりシステム状態 ==========
+  const [selectedCharacterForFeeding, setSelectedCharacterForFeeding] = useState<string | null>(null);
+  const [showFeedingResult, setShowFeedingResult] = useState(false);
+  const [feedingResultMessage, setFeedingResultMessage] = useState('');
+
   // ========== ヘルパー関数 ==========
   const getTodayDateString = () => {
     const d = new Date();
     return `${d.getMonth() + 1}/${d.getDate()}`;
+  };
+
+  // 進化家系ごとに1体のキャラクターを取得（最も進化したものを表示）
+  const getUniqueCollectedCharacters = (): CollectedCharacter[] => {
+    const latestMap = new Map<string, CollectedCharacter>();
+
+    collectedCharacters.forEach(collected => {
+      const char = getCharacterById(collected.characterId);
+      if (!char) return;
+
+      const baseId = char.baseCharacterId;
+      const existing = latestMap.get(baseId);
+
+      if (!existing || collected.evolutionLevel > existing.evolutionLevel) {
+        latestMap.set(baseId, collected);
+      }
+    });
+
+    return Array.from(latestMap.values());
   };
 
   // ========== 応援メッセージ ==========
@@ -120,6 +176,11 @@ function App() {
     }));
   };
 
+  // 特定の進化形態が取得済みかチェック
+  const isCharacterFormOwned = useCallback((characterId: string): boolean => {
+    return collectedCharacters.some(c => c.characterId === characterId);
+  }, [collectedCharacters]);
+
   // ランダムご褒美選択（使用済み除外）
   const selectRandomReward = useCallback((): string | null => {
     const availableRewards = rewardPool.rewards.filter(
@@ -142,6 +203,99 @@ function App() {
     return selectedReward;
   }, [rewardPool, setRewardPool]);
 
+  // 餌をインベントリに追加
+  const addFoodToInventory = useCallback((foodId: string) => {
+    setInventory(prev => ({
+      ...prev,
+      [foodId]: (prev[foodId] || 0) + 1
+    }));
+  }, [setInventory]);
+
+  // キャラ獲得後に餌モーダルを表示
+  useEffect(() => {
+    if (isRevealed && acquiredFood && view === 'getCharacter') {
+      const timer = setTimeout(() => {
+        setShowFoodModal(true);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isRevealed, acquiredFood, view]);
+
+  // 餌やり処理
+  const handleFeedCharacter = useCallback((character: Character, food: FoodItem) => {
+    const count = inventory[food.id] || 0;
+    if (count <= 0) return;
+
+    // インベントリから減算
+    setInventory(prev => ({
+      ...prev,
+      [food.id]: Math.max(0, (prev[food.id] || 0) - 1)
+    }));
+
+    // 結果メッセージ設定
+    const messages = [
+      `${character.name}は ${food.name}を おいしそうに たべたよ！`,
+      `${character.name}は とっても よろこんでいるよ！`,
+      `${food.name}を あげたら ${character.name}が うれしそう！`,
+      `${character.name}の だいすきな ${food.name}だ！`
+    ];
+    const randomMessage = messages[Math.floor(Math.random() * messages.length)];
+    setFeedingResultMessage(randomMessage);
+    setShowFeedingResult(true);
+  }, [inventory, setInventory]);
+
+  // ========== 進化処理 ==========
+  const handleEvolution = useCallback(() => {
+    if (!selectedCharacterForTraining) return;
+
+    const collected = collectedCharacters.find(
+      c => c.characterId === selectedCharacterForTraining.id
+    );
+
+    if (!collected || collected.evolutionLevel >= 2) {
+      alert('このキャラクターはもう最終形態です！');
+      setView('home');
+      return;
+    }
+
+    const nextEvolution = getNextEvolution(selectedCharacterForTraining.id);
+
+    if (!nextEvolution) {
+      alert('進化先が見つかりません');
+      setView('home');
+      return;
+    }
+
+    // 進化演出データセット
+    setEvolvingCharacter({
+      from: selectedCharacterForTraining,
+      to: nextEvolution
+    });
+
+    // コレクション更新
+    const updatedCollection = collectedCharacters.map(c =>
+      c.characterId === selectedCharacterForTraining.id
+        ? {
+            ...c,
+            characterId: nextEvolution.id,
+            evolutionLevel: (c.evolutionLevel + 1) as 0 | 1 | 2,
+            trainingCount: c.trainingCount + 1
+          }
+        : c
+    );
+
+    setCollectedCharacters(updatedCollection);
+
+    // アニメーションシーケンス開始
+    setEvolutionPhase('flash');
+    setView('evolution');
+
+    setTimeout(() => setEvolutionPhase('transform'), 1000);
+    setTimeout(() => setEvolutionPhase('reveal'), 3000);
+    setTimeout(() => setEvolutionPhase('complete'), 4000);
+
+  }, [selectedCharacterForTraining, collectedCharacters, setCollectedCharacters]);
+
   // ========== トレーニング開始 ==========
   const startTraining = useCallback(() => {
     const selected = selectRandomKanji(activeKanjiChars, 10);
@@ -155,8 +309,14 @@ function App() {
     setCorrectCount(0);
     setFeedback('none');
     setSelectedAnswer(null);
-    setView('reading');
-  }, [activeKanjiChars]);
+
+    // よみモード(getNew/evolve)の場合は読み練習から、かきモード(writing)の場合は書き練習から
+    if (trainingMode === 'writing') {
+      setView('writing');
+    } else {
+      setView('reading');
+    }
+  }, [activeKanjiChars, trainingMode]);
 
   // ========== 読み練習の回答処理 ==========
   const handleReadingAnswer = useCallback((option: string) => {
@@ -187,8 +347,29 @@ function App() {
         if (trainIndex < trainingQueue.length - 1) {
           setTrainIndex(prev => prev + 1);
         } else {
-          // 読み練習完了 → 遷移画面へ
-          setView('transition');
+          // 読み練習完了 → 報酬へ直接移動
+          if (trainingMode === 'getNew') {
+            // 新キャラゲット
+            const ownedIds = collectedCharacters.map(c => c.characterId);
+            const newChar = getRandomUnownedCharacter(ownedIds);
+            setNewCharacter(newChar);
+            setIsRevealed(false);
+
+            // 餌獲得
+            const randomFood = selectRandomFood();
+            addFoodToInventory(randomFood.id);
+            setAcquiredFood(randomFood);
+
+            setView('getCharacter');
+          } else if (trainingMode === 'evolve' && selectedCharacterForTraining) {
+            // 餌獲得
+            const randomFood = selectRandomFood();
+            addFoodToInventory(randomFood.id);
+            setAcquiredFood(randomFood);
+
+            // 進化処理
+            handleEvolution();
+          }
         }
       }, 1200);
     } else {
@@ -197,7 +378,7 @@ function App() {
       setEncouragingMessage(getRandomMessage(ENCOURAGING_MESSAGES));
       setFeedback('incorrect');
     }
-  }, [feedback, trainIndex, trainingQueue, setHistory, playCorrectSound, playIncorrectSound]);
+  }, [feedback, trainIndex, trainingQueue, setHistory, playCorrectSound, playIncorrectSound, trainingMode, collectedCharacters, selectedCharacterForTraining, handleEvolution]);
 
   // 不正解後に次へ進む
   const handleNextFromIncorrect = useCallback(() => {
@@ -207,9 +388,31 @@ function App() {
     if (trainIndex < trainingQueue.length - 1) {
       setTrainIndex(prev => prev + 1);
     } else {
-      setView('transition');
+      // 読み練習完了 → 報酬へ直接移動
+      if (trainingMode === 'getNew') {
+        // 新キャラゲット
+        const ownedIds = collectedCharacters.map(c => c.characterId);
+        const newChar = getRandomUnownedCharacter(ownedIds);
+        setNewCharacter(newChar);
+        setIsRevealed(false);
+
+        // 餌獲得
+        const randomFood = selectRandomFood();
+        addFoodToInventory(randomFood.id);
+        setAcquiredFood(randomFood);
+
+        setView('getCharacter');
+      } else if (trainingMode === 'evolve' && selectedCharacterForTraining) {
+        // 餌獲得
+        const randomFood = selectRandomFood();
+        addFoodToInventory(randomFood.id);
+        setAcquiredFood(randomFood);
+
+        // 進化処理
+        handleEvolution();
+      }
     }
-  }, [trainIndex, trainingQueue.length]);
+  }, [trainIndex, trainingQueue.length, trainingMode, collectedCharacters, selectedCharacterForTraining, handleEvolution, addFoodToInventory]);
 
   // ========== 書き練習開始 ==========
   const startWritingPhase = useCallback(() => {
@@ -222,22 +425,46 @@ function App() {
     if (trainIndex < trainingQueue.length - 1) {
       setTrainIndex(prev => prev + 1);
     } else {
-      // 書き練習完了 → キャラクターゲット
-      const ownedIds = collectedCharacters.map(c => c.characterId);
-      const newChar = getRandomUnownedCharacter(ownedIds);
-      setNewCharacter(newChar);
-      setIsRevealed(false);
-      setView('getCharacter');
+      // 書き練習完了
+
+      if (trainingMode === 'getNew') {
+        // ===== 既存: 新キャラゲット =====
+        const ownedIds = collectedCharacters.map(c => c.characterId);
+        const newChar = getRandomUnownedCharacter(ownedIds);
+        setNewCharacter(newChar);
+        setIsRevealed(false);
+
+        // 餌獲得
+        const randomFood = selectRandomFood();
+        addFoodToInventory(randomFood.id);
+        setAcquiredFood(randomFood);
+
+        setView('getCharacter');
+
+      } else if (trainingMode === 'evolve' && selectedCharacterForTraining) {
+        // 餌獲得
+        const randomFood = selectRandomFood();
+        addFoodToInventory(randomFood.id);
+        setAcquiredFood(randomFood);
+
+        // ===== 新規: 進化処理 =====
+        handleEvolution();
+      }
     }
-  }, [trainIndex, trainingQueue.length, collectedCharacters]);
+  }, [trainIndex, trainingQueue.length, collectedCharacters, trainingMode, selectedCharacterForTraining, handleEvolution, addFoodToInventory]);
 
   // ========== キャラクターゲット演出 ==========
   const revealCharacter = useCallback(() => {
     setIsRevealed(true);
     if (newCharacter) {
-      const updatedCollected = [
+      const updatedCollected: CollectedCharacter[] = [
         ...collectedCharacters,
-        { characterId: newCharacter.id, collectedAt: new Date().toISOString() }
+        {
+          characterId: newCharacter.id,
+          collectedAt: new Date().toISOString(),
+          evolutionLevel: 0,
+          trainingCount: 0
+        }
       ];
       setCollectedCharacters(updatedCollected);
 
@@ -304,6 +531,17 @@ function App() {
                 <span className="text-xs">きろく</span>
               </button>
               <button
+                onClick={() => {
+                  setSelectedCharacterForFeeding(null);
+                  setView('feeding');
+                }}
+                className="bg-white/90 p-3 rounded-full shadow-lg text-green-500 font-bold flex items-center gap-2 px-4 hover:scale-105 transition-transform"
+                disabled={collectedCharacters.length === 0}
+              >
+                <Apple size={20} />
+                <span className="text-xs">ごはん</span>
+              </button>
+              <button
                 onClick={() => setView('settings')}
                 className="bg-gray-800/80 p-2 rounded-full shadow-lg text-white font-bold flex items-center gap-2 px-4 hover:bg-gray-800 transition-transform mt-2"
               >
@@ -353,19 +591,241 @@ function App() {
                 )}
               </div>
 
-              {/* スタートボタン */}
+              {/* トレーニングボタン */}
+              <div className="w-full max-w-xs flex flex-col gap-4">
+                {/* よみボタン */}
+                <button
+                  onClick={() => {
+                    setTrainingMode('reading');
+                    setView('modeSelect');
+                  }}
+                  className="w-full bg-gradient-to-r from-blue-400 to-cyan-500 text-white font-black text-2xl py-8 rounded-3xl shadow-[0_8px_0_rgba(50,100,180,0.3)] active:shadow-none active:translate-y-2 transition-all flex flex-col items-center group"
+                >
+                  <div className="flex items-center gap-3 mb-1 group-hover:scale-110 transition-transform">
+                    <BookOpen size={32} className="animate-pulse" />
+                    <span>よみ</span>
+                  </div>
+                  <span className="text-sm font-bold bg-black/10 px-3 py-1 rounded-full">
+                    10問 よみトレーニング
+                  </span>
+                </button>
+
+                {/* かきボタン */}
+                <button
+                  onClick={() => {
+                    setTrainingMode('writing');
+                    setView('modeSelect');
+                  }}
+                  className="w-full bg-gradient-to-r from-orange-400 to-red-500 text-white font-black text-2xl py-8 rounded-3xl shadow-[0_8px_0_rgba(180,50,50,0.3)] active:shadow-none active:translate-y-2 transition-all flex flex-col items-center group"
+                >
+                  <div className="flex items-center gap-3 mb-1 group-hover:scale-110 transition-transform">
+                    <Pencil size={32} className="animate-pulse" />
+                    <span>かき</span>
+                  </div>
+                  <span className="text-sm font-bold bg-black/10 px-3 py-1 rounded-full">
+                    10問 かきトレーニング
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========== モード選択画面 ========== */}
+        {view === 'modeSelect' && (
+          <div className="h-full bg-gradient-to-b from-purple-400 to-pink-500 p-6 flex flex-col">
+            {/* 戻るボタン */}
+            <button
+              onClick={() => setView('home')}
+              className="absolute top-4 left-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
+            >
+              <ArrowRight size={20} className="rotate-180" />
+            </button>
+
+            <div className="flex-1 flex flex-col items-center justify-center gap-6">
+              <h2 className="text-3xl font-black text-white mb-4 text-center drop-shadow-lg">
+                {trainingMode === 'reading' ? 'よみトレーニング' : 'かきトレーニング'}
+              </h2>
+
+              {/* よみモードの場合: 新キャラゲットと育成の両方 */}
+              {trainingMode === 'reading' && (
+                <>
+                  {/* 新キャラゲットモード */}
+                  <button
+                    onClick={() => {
+                      setTrainingMode('getNew');
+                      startTraining();
+                    }}
+                    className="w-full max-w-xs bg-gradient-to-r from-yellow-400 to-orange-500 text-white font-black text-xl py-8 rounded-3xl shadow-[0_8px_0_rgba(180,100,0,0.3)] active:shadow-none active:translate-y-2 transition-all hover:scale-105"
+                  >
+                    <div className="flex flex-col items-center gap-2">
+                      <Sparkles size={40} className="animate-pulse" />
+                      <span className="text-center leading-tight">
+                        あたらしい<br />キャラクターをゲットする
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* 育成モード */}
+                  <button
+                    onClick={() => {
+                      setTrainingMode('evolve');
+                      setView('characterSelect');
+                    }}
+                    className="w-full max-w-xs bg-gradient-to-r from-green-400 to-emerald-500 text-white font-black text-xl py-8 rounded-3xl shadow-[0_8px_0_rgba(0,100,80,0.3)] active:shadow-none active:translate-y-2 transition-all hover:scale-105"
+                    disabled={collectedCharacters.length === 0}
+                  >
+                    <div className="flex flex-col items-center gap-2">
+                      <TrendingUp size={40} className="animate-bounce" />
+                      <span className="text-center leading-tight">
+                        キャラクターをえらんで<br />そだてる
+                      </span>
+                    </div>
+                  </button>
+
+                  {collectedCharacters.length === 0 && (
+                    <p className="text-white/80 text-sm text-center mt-2">
+                      ※ まずキャラクターをゲットしよう！
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* かきモードの場合: 新キャラゲットと育成の両方 */}
+              {trainingMode === 'writing' && (
+                <>
+                  {/* 新キャラゲットモード */}
+                  <button
+                    onClick={() => {
+                      setTrainingMode('getNew');
+                      startTraining();
+                    }}
+                    className="w-full max-w-xs bg-gradient-to-r from-yellow-400 to-orange-500 text-white font-black text-xl py-8 rounded-3xl shadow-[0_8px_0_rgba(180,100,0,0.3)] active:shadow-none active:translate-y-2 transition-all hover:scale-105"
+                  >
+                    <div className="flex flex-col items-center gap-2">
+                      <Sparkles size={40} className="animate-pulse" />
+                      <span className="text-center leading-tight">
+                        あたらしい<br />キャラクターをゲットする
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* 育成モード */}
+                  <button
+                    onClick={() => {
+                      setTrainingMode('evolve');
+                      setView('characterSelect');
+                    }}
+                    className="w-full max-w-xs bg-gradient-to-r from-green-400 to-emerald-500 text-white font-black text-xl py-8 rounded-3xl shadow-[0_8px_0_rgba(0,100,80,0.3)] active:shadow-none active:translate-y-2 transition-all hover:scale-105"
+                    disabled={collectedCharacters.length === 0}
+                  >
+                    <div className="flex flex-col items-center gap-2">
+                      <TrendingUp size={40} className="animate-bounce" />
+                      <span className="text-center leading-tight">
+                        キャラクターをえらんで<br />そだてる
+                      </span>
+                    </div>
+                  </button>
+
+                  {collectedCharacters.length === 0 && (
+                    <p className="text-white/80 text-sm text-center mt-2">
+                      ※ キャラクターがいなくても<br />かきトレーニングで ゲットできるよ！
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ========== キャラクター選択画面 ========== */}
+        {view === 'characterSelect' && (
+          <div className="h-full bg-green-50 flex flex-col">
+            {/* ヘッダー */}
+            <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white p-6 relative">
               <button
-                onClick={startTraining}
-                className="w-full max-w-xs bg-gradient-to-r from-orange-400 to-red-500 text-white font-black text-2xl py-8 rounded-3xl shadow-[0_8px_0_rgba(180,50,50,0.3)] active:shadow-none active:translate-y-2 transition-all flex flex-col items-center group"
+                onClick={() => setView('modeSelect')}
+                className="absolute top-4 left-4 bg-white/20 hover:bg-white/30 p-2 rounded-full"
               >
-                <div className="flex items-center gap-3 mb-1 group-hover:scale-110 transition-transform">
-                  <Sword size={32} className="animate-pulse" />
-                  <span>今日の特訓！</span>
-                </div>
-                <span className="text-sm font-bold bg-black/10 px-3 py-1 rounded-full">
-                  10問 よみ＆かき
-                </span>
+                <ArrowRight size={20} className="rotate-180" />
               </button>
+              <h2 className="text-2xl font-black text-center">
+                そだてる キャラを えらぼう
+              </h2>
+              <p className="text-sm text-center mt-2 text-green-100">
+                トレーニングで キャラクターが しんか するよ！
+              </p>
+            </div>
+
+            {/* キャラクター一覧 */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-2 gap-4">
+                {getUniqueCollectedCharacters().map((collected) => {
+                  const char = getCharacterById(collected.characterId);
+                  if (!char) return null;
+
+                  const canEvolveThis = canEvolve(char) && collected.evolutionLevel < 2;
+
+                  return (
+                    <button
+                      key={collected.characterId}
+                      onClick={() => {
+                        setSelectedCharacterForTraining(char);
+                        startTraining();
+                      }}
+                      className="bg-white rounded-2xl p-4 shadow-md hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex flex-col items-center gap-2 relative"
+                    >
+                      {/* 進化可能バッジ */}
+                      {canEvolveThis && (
+                        <div className="absolute top-2 right-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-[10px] font-black px-2 py-1 rounded-full animate-pulse shadow-lg">
+                          しんか できる！
+                        </div>
+                      )}
+
+                      {/* 最終形態バッジ */}
+                      {collected.evolutionLevel === 2 && (
+                        <div className="absolute top-2 left-2 text-2xl animate-bounce">
+                          👑
+                        </div>
+                      )}
+
+                      {/* キャラクター画像 */}
+                      <div className="text-6xl mb-2">
+                        {char.image}
+                      </div>
+
+                      {/* キャラクター名 */}
+                      <span className="text-lg font-black text-gray-800">
+                        {char.name}
+                      </span>
+
+                      {/* 進化レベル表示 */}
+                      <div className="flex gap-1">
+                        {Array.from({ length: collected.evolutionLevel + 1 }).map((_, i) => (
+                          <span key={i} className="text-yellow-500 text-xl">★</span>
+                        ))}
+                        {Array.from({ length: 2 - collected.evolutionLevel }).map((_, i) => (
+                          <span key={i} className="text-gray-300 text-xl">★</span>
+                        ))}
+                      </div>
+
+                      {/* トレーニング回数 */}
+                      <span className="text-xs text-gray-500">
+                        トレーニング {collected.trainingCount}回
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* キャラクターがいない場合 */}
+              {getUniqueCollectedCharacters().length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                  <div className="text-6xl mb-4">🎯</div>
+                  <p className="text-lg font-bold">まだキャラクターが いないよ</p>
+                  <p className="text-sm">まずは「あたらしいキャラクターをゲットする」で<br />キャラクターを ゲットしよう！</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -581,7 +1041,7 @@ function App() {
 
                 <p className="text-gray-500 font-bold mb-6 text-lg">
                   「<span className="text-green-600 text-2xl mx-1">{trainingQueue[trainIndex].char}</span>」を
-                  <span className="text-red-500 text-3xl mx-1 font-black">5回</span> かこう！
+                  <span className="text-red-500 text-3xl mx-1 font-black">1回</span> かこう！
                 </p>
 
                 <button
@@ -626,6 +1086,109 @@ function App() {
         )}
 
         {/* ========== キャラクターゲット画面 ========== */}
+        {/* ========== 進化演出画面 ========== */}
+        {view === 'evolution' && evolvingCharacter && (
+          <div className="h-full bg-gradient-to-b from-indigo-600 via-purple-600 to-pink-600 p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
+            {/* フラッシュフェーズ */}
+            {evolutionPhase === 'flash' && (
+              <div className="absolute inset-0 bg-white animate-pulse z-50" />
+            )}
+
+            {/* 完了時の紙吹雪 */}
+            {evolutionPhase === 'complete' && <Confetti />}
+
+            {/* 変身フェーズ */}
+            {evolutionPhase === 'transform' && (
+              <div className="animate-pop-in">
+                <p className="text-white text-2xl font-black mb-8 animate-pulse">
+                  おや！ {evolvingCharacter.from.name}の ようすが...？
+                </p>
+
+                <div className="relative w-48 h-48 mx-auto">
+                  {/* 光の輪エフェクト */}
+                  <div className="absolute inset-0 bg-yellow-300 rounded-full opacity-50 animate-ping" />
+                  <div className="absolute inset-0 bg-white rounded-full opacity-30 animate-pulse" />
+
+                  {/* キャラクター（点滅） */}
+                  <div className="absolute inset-0 flex items-center justify-center text-8xl animate-pulse">
+                    {evolvingCharacter.from.image}
+                  </div>
+                </div>
+
+                <p className="text-yellow-200 text-lg font-bold mt-8 animate-bounce">
+                  しんか ちゅう...
+                </p>
+              </div>
+            )}
+
+            {/* リビール & 完了フェーズ */}
+            {(evolutionPhase === 'reveal' || evolutionPhase === 'complete') && (
+              <div className="animate-pop-in">
+                <p className="text-yellow-300 text-3xl font-black mb-6 animate-bounce drop-shadow-lg">
+                  しんか しました！
+                </p>
+
+                <div className="bg-white rounded-3xl p-8 shadow-2xl max-w-sm">
+                  {/* 進化後キャラクター */}
+                  <div className="relative">
+                    <div className="w-32 h-32 mx-auto bg-gradient-to-br from-yellow-100 to-orange-100 rounded-2xl flex items-center justify-center text-8xl mb-4 shadow-inner animate-float">
+                      {evolvingCharacter.to.image}
+                    </div>
+
+                    {/* 最終形態の場合は王冠 */}
+                    {evolvingCharacter.to.evolutionStage === 2 && (
+                      <div className="absolute -top-4 left-1/2 -translate-x-1/2 text-4xl animate-bounce">
+                        👑
+                      </div>
+                    )}
+                  </div>
+
+                  <h2 className="text-3xl font-black text-gray-800 mb-2">
+                    {evolvingCharacter.to.name}
+                  </h2>
+
+                  {evolvingCharacter.to.evolutionStage === 2 && (
+                    <p className="text-orange-500 font-black text-sm mb-2 animate-pulse">
+                      ⭐ さいしゅう しんか！ ⭐
+                    </p>
+                  )}
+
+                  {/* 進化レベル表示 */}
+                  <div className="flex gap-1 justify-center mb-3">
+                    {Array.from({ length: evolvingCharacter.to.evolutionStage + 1 }).map((_, i) => (
+                      <span key={i} className="text-yellow-500 text-2xl">★</span>
+                    ))}
+                  </div>
+
+                  <p className="text-gray-500 text-sm mb-4">
+                    {evolvingCharacter.to.description}
+                  </p>
+
+                  <div className="flex items-center justify-center gap-2 text-purple-500 font-bold">
+                    <Sparkles size={20} />
+                    <span>パワーアップ した！</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setView('home');
+                    setSelectedCharacterForTraining(null);
+                    // 餌モーダルを表示
+                    if (acquiredFood) {
+                      setTimeout(() => setShowFoodModal(true), 300);
+                    }
+                  }}
+                  className="mt-6 bg-white text-purple-600 font-black text-xl py-4 px-8 rounded-2xl shadow-lg flex items-center gap-2 mx-auto hover:bg-purple-50 transition-colors"
+                >
+                  <ArrowRight size={24} />
+                  ホームへ
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {view === 'getCharacter' && (
           <div className="h-full bg-gradient-to-b from-purple-500 to-pink-500 p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
             {isRevealed && <Confetti />}
@@ -771,7 +1334,7 @@ function App() {
                 onClick={() => setSelectedCharacterDetail(null)}
               >
                 <div
-                  className="bg-white rounded-3xl p-6 w-full max-w-sm animate-pop-in"
+                  className="bg-white rounded-3xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto animate-pop-in"
                   onClick={e => e.stopPropagation()}
                 >
                   <div className="flex justify-end">
@@ -813,9 +1376,62 @@ function App() {
                     <h3 className="text-2xl font-black text-gray-800 mb-2">
                       {selectedCharacterDetail.name}
                     </h3>
-                    <p className="text-gray-500">
+                    <p className="text-gray-500 mb-4">
                       {selectedCharacterDetail.description}
                     </p>
+
+                    {/* 進化チェーン表示 */}
+                    <div className="mb-4">
+                      <h3 className="text-sm font-bold text-purple-600 mb-3 border-b-2 border-purple-200 pb-1">
+                        ⚡ しんかのれきし
+                      </h3>
+
+                      <div className="flex items-center justify-center gap-2">
+                        {getEvolutionChain(selectedCharacterDetail.baseCharacterId).map((char, idx) => {
+                          const isOwned = isCharacterFormOwned(char.id);
+                          const isCurrent = char.id === selectedCharacterDetail.id;
+
+                          return (
+                            <React.Fragment key={char.id}>
+                              {/* 各進化段階のカード */}
+                              <div
+                                className={`
+                                  flex-1 rounded-xl p-3 text-center transition-all
+                                  ${isCurrent
+                                    ? 'border-4 border-yellow-400 bg-gradient-to-br from-yellow-50 to-orange-50 shadow-lg animate-pulse-glow'
+                                    : isOwned
+                                      ? 'border-2 border-purple-200 bg-purple-50'
+                                      : 'border-2 border-gray-200 bg-gray-100'
+                                  }
+                                `}
+                              >
+                                {/* キャラクター画像 */}
+                                <div className="text-4xl mb-1">
+                                  {char.image}
+                                </div>
+
+                                {/* キャラクター名 */}
+                                <div className="text-xs font-bold mb-1">
+                                  {char.name}
+                                </div>
+
+                                {/* 進化レベル表示 */}
+                                <div className="flex justify-center gap-0.5">
+                                  {Array.from({ length: char.evolutionStage + 1 }).map((_, i) => (
+                                    <span key={i} className="text-yellow-500">★</span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* 矢印 */}
+                              {idx < 2 && (
+                                <ArrowRight size={16} className="text-purple-400 flex-shrink-0" />
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+                    </div>
 
                     {/* プロフィールセクション */}
                     <div className="mt-4 space-y-2 text-left">
@@ -979,6 +1595,135 @@ function App() {
                 </>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ========== 餌やり画面 ========== */}
+        {view === 'feeding' && (
+          <div className="h-full bg-green-50 flex flex-col">
+            {/* ヘッダー */}
+            <div className="bg-green-500 text-white p-6 pb-8 rounded-b-[30px] shadow-lg">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Apple /> ごはんをあげる
+                </h2>
+                <button
+                  onClick={() => {
+                    setSelectedCharacterForFeeding(null);
+                    setView('home');
+                  }}
+                  className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* キャラクター未選択: キャラクター一覧 */}
+            {!selectedCharacterForFeeding && (
+              <div className="flex-1 overflow-y-auto p-6">
+                <p className="text-center text-green-700 font-bold mb-4">
+                  ごはんをあげる キャラクターを えらんでね
+                </p>
+                <div className="grid grid-cols-3 gap-4">
+                  {getUniqueCollectedCharacters().map(cc => {
+                    const char = getCharacterById(cc.characterId);
+                    if (!char) return null;
+
+                    return (
+                      <button
+                        key={cc.characterId}
+                        onClick={() => setSelectedCharacterForFeeding(char.id)}
+                        className="bg-white p-4 rounded-2xl shadow-lg hover:scale-105 transition-transform active:scale-95"
+                      >
+                        <div className="text-5xl mb-2">{char.image}</div>
+                        <div className="text-sm font-bold text-gray-700">{char.name}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* キャラクター選択済み: 餌選択画面 */}
+            {selectedCharacterForFeeding && (() => {
+              const selectedChar = getCharacterById(selectedCharacterForFeeding);
+              if (!selectedChar) return null;
+
+              return (
+                <div className="flex-1 overflow-y-auto p-6">
+                  {/* 選択キャラクター表示 */}
+                  <div className="bg-white p-4 rounded-2xl shadow-lg mb-6 text-center">
+                    <div className="text-6xl mb-2">{selectedChar.image}</div>
+                    <div className="font-bold text-lg text-gray-800">{selectedChar.name}</div>
+                    <div className="text-sm text-gray-500 mt-1">{selectedChar.description}</div>
+                  </div>
+
+                  {/* 戻るボタン */}
+                  <button
+                    onClick={() => setSelectedCharacterForFeeding(null)}
+                    className="w-full mb-4 bg-gray-200 text-gray-700 py-2 rounded-xl font-bold hover:bg-gray-300"
+                  >
+                    ← キャラクターを かえる
+                  </button>
+
+                  {/* 餌一覧 */}
+                  <p className="text-center text-green-700 font-bold mb-4">
+                    あげる ごはんを えらんでね
+                  </p>
+
+                  <div className="grid grid-cols-4 gap-3">
+                    {FOODS.map(food => {
+                      const count = inventory[food.id] || 0;
+                      const canEat = selectedChar.favoriteFood.includes(food.id);
+                      const canGive = count > 0 && canEat;
+
+                      return (
+                        <button
+                          key={food.id}
+                          onClick={() => canGive && handleFeedCharacter(selectedChar, food)}
+                          disabled={!canGive}
+                          className={`
+                            relative p-3 rounded-xl shadow-md transition-all
+                            ${canGive
+                              ? 'bg-gradient-to-br from-yellow-100 to-orange-100 hover:scale-110 active:scale-95 cursor-pointer'
+                              : canEat
+                                ? 'bg-gray-100 opacity-50 cursor-not-allowed'
+                                : 'bg-gray-200 opacity-30 cursor-not-allowed grayscale'
+                            }
+                          `}
+                        >
+                          <div className="text-3xl mb-1">{food.emoji}</div>
+                          <div className="text-[10px] font-bold text-gray-700 truncate">
+                            {food.name}
+                          </div>
+                          {count > 0 && (
+                            <div className="absolute top-1 right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                              {count}
+                            </div>
+                          )}
+                          {!canEat && count > 0 && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <X size={24} className="text-red-500" />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* ヘルプテキスト */}
+                  <div className="mt-6 bg-green-100 p-4 rounded-xl text-sm text-green-800">
+                    <p className="font-bold mb-2">💡 ヒント</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      <li>キラキラ✨している ごはんは あげられるよ！</li>
+                      <li>グレーの ごはんは このキャラは たべられないよ</li>
+                      <li>すうじは もっている かずだよ</li>
+                    </ul>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1212,6 +1957,69 @@ function App() {
               >
                 やったー！
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* ========== 餌獲得モーダル ========== */}
+        {showFoodModal && acquiredFood && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
+            <div className="bg-gradient-to-b from-green-300 to-green-400 p-8 rounded-3xl shadow-2xl max-w-md mx-4 text-center animate-pop-in">
+              <div className="text-6xl mb-4 animate-bounce">{acquiredFood.emoji}</div>
+              <h2 className="text-3xl font-black text-green-900 mb-2">
+                たべものを ゲット！
+              </h2>
+              <p className="text-green-800 font-bold text-2xl mb-4">
+                {acquiredFood.name}
+              </p>
+              <div className="bg-white p-4 rounded-2xl my-4 shadow-inner">
+                <p className="text-gray-600 text-sm">
+                  キャラクターに<br />あげられるよ！
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowFoodModal(false);
+                  setAcquiredFood(null);
+                }}
+                className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold text-lg py-3 px-8 rounded-full transition-colors shadow-lg"
+              >
+                わかった！
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ========== 餌やり結果モーダル ========== */}
+        {showFeedingResult && selectedCharacterForFeeding && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
+            <div className="bg-gradient-to-b from-orange-300 to-yellow-400 p-8 rounded-3xl shadow-2xl max-w-md mx-4 text-center animate-pop-in">
+              {(() => {
+                const char = getCharacterById(selectedCharacterForFeeding);
+                if (!char) return null;
+                return (
+                  <>
+                    <div className="text-7xl mb-4 animate-bounce">{char.image}</div>
+                    <h2 className="text-2xl font-black text-orange-900 mb-4">
+                      {feedingResultMessage}
+                    </h2>
+                    {char.sound && (
+                      <div className="bg-white/80 p-3 rounded-xl mb-4">
+                        <p className="text-lg font-bold text-gray-700">{char.sound}</p>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setShowFeedingResult(false);
+                        setFeedingResultMessage('');
+                      }}
+                      className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-lg py-3 px-8 rounded-full transition-colors shadow-lg"
+                    >
+                      もっと あげる！
+                    </button>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}

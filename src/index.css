@@ -46,9 +46,24 @@ body {
   to { stroke-dashoffset: 0; }
 }
 
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.8), 0 0 30px rgba(251, 191, 36, 0.4);
+  }
+}
+
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-pop-in { animation: pop-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
 .animate-slide-in { animation: slide-in 0.4s ease-out; }
 .animate-fade-in { animation: fade-in 0.2s ease-out; }
 .animate-shake { animation: shake 0.5s ease-in-out; }
 .animate-sparkle { animation: sparkle 1s ease-in-out infinite; }
+.animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+
+/* グレースケールフィルター */
+.grayscale {
+  filter: grayscale(100%);
+}
