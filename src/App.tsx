@@ -3,15 +3,20 @@ import {
   BookOpen, Book, History, Settings, X, CheckCircle,
   ArrowRight, CheckSquare, Square, Pencil, Sparkles, TrendingUp, Apple
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { ViewType, KanjiData, CollectedCharacter, HistoryRecord, Character, RewardPool, TrainingMode, FoodItem, Inventory } from './types';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { use8BitVoice } from './hooks/use8BitVoice';
 import { useFeedbackSounds } from './hooks/useFeedbackSounds';
+import { useIsMobile } from './hooks/useIsMobile';
 import { GRADE_1_KANJI, getKanjiByGrade, selectRandomKanji } from './data/kanji';
-import { CHARACTERS, getCharacterById, getRandomUnownedCharacter, TOTAL_CHARACTER_COUNT, getNextEvolution, canEvolve, getEvolutionChain } from './data/characters';
+import { CHARACTERS, getCharacterById, getRandomUnownedCharacter, TOTAL_CHARACTER_COUNT, getNextEvolution, getEvolutionChain } from './data/characters';
 import { selectRandomFood, FOODS } from './data/foods';
 import { StrokeOrderAnimation } from './components/StrokeOrderAnimation';
 import { Confetti } from './components/Confetti';
+import { Container } from './components/Container';
+import { Header } from './components/Header';
+import { surfaceTones, primaryColors } from './theme/colors';
 
 function App() {
   // ========== 永続化された状態 ==========
@@ -60,6 +65,9 @@ function App() {
   const { play8BitSound } = use8BitVoice();
   const { playCorrectSound, playIncorrectSound } = useFeedbackSounds();
 
+  // ========== レスポンシブ ==========
+  const isMobile = useIsMobile();
+
   // ========== UI状態 ==========
   const [view, setView] = useState<ViewType>('home');
   const [settingTabGrade, setSettingTabGrade] = useState(1);
@@ -101,6 +109,10 @@ function App() {
   const [selectedCharacterForFeeding, setSelectedCharacterForFeeding] = useState<string | null>(null);
   const [showFeedingResult, setShowFeedingResult] = useState(false);
   const [feedingResultMessage, setFeedingResultMessage] = useState('');
+  const [feedingConfirmation, setFeedingConfirmation] = useState<{ character: Character; food: FoodItem } | null>(null);
+
+  // ========== 練習中断確認状態 ==========
+  const [showExitTrainingConfirm, setShowExitTrainingConfirm] = useState(false);
 
   // ========== ヘルパー関数 ==========
   const getTodayDateString = () => {
@@ -221,10 +233,20 @@ function App() {
     }
   }, [isRevealed, acquiredFood, view]);
 
-  // 餌やり処理
+  // 餌やり確認モーダルを表示
   const handleFeedCharacter = useCallback((character: Character, food: FoodItem) => {
     const count = inventory[food.id] || 0;
     if (count <= 0) return;
+
+    // 確認モーダルを表示
+    setFeedingConfirmation({ character, food });
+  }, [inventory]);
+
+  // 餌やり実行処理
+  const confirmFeedCharacter = useCallback(() => {
+    if (!feedingConfirmation) return;
+
+    const { character, food } = feedingConfirmation;
 
     // インベントリから減算
     setInventory(prev => ({
@@ -242,7 +264,8 @@ function App() {
     const randomMessage = messages[Math.floor(Math.random() * messages.length)];
     setFeedingResultMessage(randomMessage);
     setShowFeedingResult(true);
-  }, [inventory, setInventory]);
+    setFeedingConfirmation(null);
+  }, [feedingConfirmation, setInventory]);
 
   // ========== 進化処理 ==========
   const handleEvolution = useCallback(() => {
@@ -508,131 +531,180 @@ function App() {
 
   // ========== レンダリング ==========
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans">
-      <div className="w-full max-w-md bg-white rounded-[40px] shadow-2xl overflow-hidden h-[850px] flex flex-col border-8 border-gray-800 relative">
+    <div className="min-h-screen font-sans" style={{ backgroundColor: surfaceTones.background }}>
+      {/* ヘッダー（Material Design 3風） */}
+      <Header
+        view={view}
+        setView={setView}
+        collectedCharacters={collectedCharacters}
+        setSelectedCharacterForFeeding={setSelectedCharacterForFeeding}
+      />
 
-        {/* ========== ホーム画面 ========== */}
-        {view === 'home' && (
-          <div className="h-full bg-gradient-to-b from-emerald-400 to-cyan-500 p-6 flex flex-col relative overflow-hidden">
-            {/* 上部ボタン */}
-            <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
-              <button
-                onClick={() => setView('collection')}
-                className="bg-white/90 p-3 rounded-full shadow-lg text-purple-500 font-bold flex items-center gap-2 px-4 hover:scale-105 transition-transform"
-              >
-                <Book size={20} />
-                <span className="text-xs">ずかん</span>
-              </button>
-              <button
-                onClick={() => setView('history')}
-                className="bg-white/90 p-3 rounded-full shadow-lg text-blue-500 font-bold flex items-center gap-2 px-4 hover:scale-105 transition-transform"
-              >
-                <History size={20} />
-                <span className="text-xs">きろく</span>
-              </button>
-              <button
-                onClick={() => {
-                  setSelectedCharacterForFeeding(null);
-                  setView('feeding');
+      {/* メインコンテンツ */}
+      <AnimatePresence mode="wait">
+          {/* ========== ホーム画面 ========== */}
+          {view === 'home' && (
+            <motion.main
+              key="home"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.3 }}
+              className="container mx-auto px-4 py-6"
+            >
+              <div
+                className="rounded-2xl shadow-sm p-6 md:p-8"
+                style={{
+                  backgroundColor: surfaceTones.surface,
+                  border: `1px solid ${surfaceTones.outlineVariant}`,
                 }}
-                className="bg-white/90 p-3 rounded-full shadow-lg text-green-500 font-bold flex items-center gap-2 px-4 hover:scale-105 transition-transform"
-                disabled={collectedCharacters.length === 0}
               >
-                <Apple size={20} />
-                <span className="text-xs">ごはん</span>
-              </button>
-              <button
-                onClick={() => setView('settings')}
-                className="bg-gray-800/80 p-2 rounded-full shadow-lg text-white font-bold flex items-center gap-2 px-4 hover:bg-gray-800 transition-transform mt-2"
-              >
-                <Settings size={16} />
-                <span className="text-xs">保護者設定</span>
-              </button>
-            </div>
+                <Container maxWidth="2xl" className="flex flex-col items-center">
+                  {/* タイトル */}
+                  <motion.div
+                    className="mb-8 text-center"
+                    initial={{ y: -20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ duration: 0.5, type: 'spring' }}
+                  >
+                    <h2 className={`${isMobile ? 'text-2xl' : 'text-4xl'} font-black text-gray-800 mb-2`}>
+                      べんきょうして キャラをゲット！
+                    </h2>
+                  </motion.div>
 
-            <div className="flex-1 flex flex-col items-center justify-center">
-              {/* タイトル */}
-              <div className="mb-8 text-center">
-                <h1 className="text-3xl font-black text-white drop-shadow-lg mb-2">
-                  かんじマスター
-                </h1>
-                <p className="text-white/80 text-sm font-bold">
-                  べんきょうして キャラをゲット！
-                </p>
-              </div>
+                  {/* コレクション数 */}
+                  <motion.div
+                    className={`mb-8 rounded-2xl ${isMobile ? 'px-6 py-3' : 'px-10 py-5'}`}
+                    style={{
+                      backgroundColor: surfaceTones.surfaceVariant,
+                      border: `1px solid ${surfaceTones.outlineVariant}`,
+                    }}
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ duration: 0.5, delay: 0.1, type: 'spring' }}
+                  >
+                    <p className="font-bold text-center text-gray-800">
+                      <span className={isMobile ? 'text-3xl' : 'text-5xl'}>{collectedCharacters.length}</span>
+                      <span className={isMobile ? 'text-lg' : 'text-2xl'}> / {TOTAL_CHARACTER_COUNT}</span>
+                      <span className={`${isMobile ? 'text-sm' : 'text-lg'} ml-2`}>ゲット！</span>
+                    </p>
+                  </motion.div>
 
-              {/* コレクション数 */}
-              <div className="mb-8 bg-white/20 backdrop-blur-sm px-6 py-3 rounded-2xl">
-                <p className="text-white font-bold text-center">
-                  <span className="text-3xl">{collectedCharacters.length}</span>
-                  <span className="text-lg"> / {TOTAL_CHARACTER_COUNT}</span>
-                  <span className="text-sm ml-2">ゲット！</span>
-                </p>
-              </div>
+                  {/* キャラクターたち */}
+                  <div className={`mb-8 flex gap-3 flex-wrap justify-center ${isMobile ? 'max-w-[300px]' : 'max-w-md'}`}>
+                    {collectedCharacters.slice(0, isMobile ? 9 : 12).map((cc, i) => {
+                      const char = getCharacterById(cc.characterId);
+                      return char ? (
+                        <motion.div
+                          key={i}
+                          className={`${isMobile ? 'w-14 h-14' : 'w-16 h-16'} rounded-2xl flex items-center justify-center ${isMobile ? 'text-2xl' : 'text-3xl'} shadow-sm`}
+                          style={{
+                            backgroundColor: surfaceTones.surface,
+                            border: `1px solid ${surfaceTones.outlineVariant}`,
+                          }}
+                          initial={{ scale: 0, rotate: -180 }}
+                          animate={{ scale: 1, rotate: 0 }}
+                          transition={{
+                            duration: 0.5,
+                            delay: 0.2 + i * 0.05,
+                            type: 'spring',
+                            stiffness: 260,
+                            damping: 20,
+                          }}
+                          whileHover={{ scale: 1.1, rotate: 5 }}
+                        >
+                          {char.image}
+                        </motion.div>
+                      ) : null;
+                    })}
+                    {collectedCharacters.length > (isMobile ? 9 : 12) && (
+                      <motion.div
+                        className={`${isMobile ? 'w-14 h-14 text-sm' : 'w-16 h-16 text-base'} rounded-2xl flex items-center justify-center font-bold shadow-sm`}
+                        style={{
+                          backgroundColor: surfaceTones.surfaceVariant,
+                          border: `1px solid ${surfaceTones.outlineVariant}`,
+                          color: surfaceTones.outline,
+                        }}
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ duration: 0.5, delay: 0.8 }}
+                      >
+                        +{collectedCharacters.length - (isMobile ? 9 : 12)}
+                      </motion.div>
+                    )}
+                  </div>
 
-              {/* キャラクターたち */}
-              <div className="mb-8 flex gap-2 flex-wrap justify-center max-w-[280px]">
-                {collectedCharacters.slice(0, 9).map((cc, i) => {
-                  const char = getCharacterById(cc.characterId);
-                  return char ? (
-                    <div
-                      key={i}
-                      className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl shadow-lg animate-float"
-                      style={{ animationDelay: `${i * 0.2}s` }}
+                  {/* トレーニングボタン */}
+                  <div className={`w-full ${isMobile ? 'max-w-xs' : 'max-w-2xl'} flex ${isMobile ? 'flex-col' : 'flex-row'} gap-4`}>
+                    {/* よみボタン */}
+                    <motion.button
+                      onClick={() => {
+                        setTrainingMode('reading');
+                        setView('modeSelect');
+                      }}
+                      className={`${isMobile ? 'w-full' : 'flex-1'} font-black ${isMobile ? 'text-2xl py-6' : 'text-3xl py-8'} rounded-2xl shadow-sm transition-colors flex flex-col items-center`}
+                      style={{
+                        backgroundColor: primaryColors.primaryBlueContainer,
+                        color: primaryColors.onPrimaryBlue,
+                        border: `2px solid ${primaryColors.primaryBlue}`,
+                      }}
+                      initial={{ x: -50, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      transition={{ duration: 0.4, delay: 0.3 }}
+                      whileHover={{
+                        backgroundColor: primaryColors.primaryBlue,
+                        color: '#ffffff',
+                        scale: 1.02,
+                      }}
+                      whileTap={{ scale: 0.98 }}
                     >
-                      {char.image}
-                    </div>
-                  ) : null;
-                })}
-                {collectedCharacters.length > 9 && (
-                  <div className="w-12 h-12 bg-white/50 rounded-xl flex items-center justify-center text-sm font-bold text-white">
-                    +{collectedCharacters.length - 9}
+                      <div className="flex items-center gap-3 mb-1">
+                        <BookOpen size={isMobile ? 32 : 36} />
+                        <span>よみ</span>
+                      </div>
+                      <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-normal opacity-80`}>
+                        10問 よみトレーニング
+                      </span>
+                    </motion.button>
+
+                    {/* かきボタン */}
+                    <motion.button
+                      onClick={() => {
+                        setTrainingMode('writing');
+                        setView('modeSelect');
+                      }}
+                      className={`${isMobile ? 'w-full' : 'flex-1'} font-black ${isMobile ? 'text-2xl py-6' : 'text-3xl py-8'} rounded-2xl shadow-sm transition-colors flex flex-col items-center`}
+                      style={{
+                        backgroundColor: primaryColors.primaryOrangeContainer,
+                        color: primaryColors.onPrimaryOrange,
+                        border: `2px solid ${primaryColors.primaryOrange}`,
+                      }}
+                      initial={{ x: 50, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      transition={{ duration: 0.4, delay: 0.4 }}
+                      whileHover={{
+                        backgroundColor: primaryColors.primaryOrange,
+                        color: '#ffffff',
+                        scale: 1.02,
+                      }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <div className="flex items-center gap-3 mb-1">
+                        <Pencil size={isMobile ? 32 : 36} />
+                        <span>かき</span>
+                      </div>
+                      <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-normal opacity-80`}>
+                        10問 かきトレーニング
+                      </span>
+                    </motion.button>
                   </div>
-                )}
+                </Container>
               </div>
+            </motion.main>
+          )}
 
-              {/* トレーニングボタン */}
-              <div className="w-full max-w-xs flex flex-col gap-4">
-                {/* よみボタン */}
-                <button
-                  onClick={() => {
-                    setTrainingMode('reading');
-                    setView('modeSelect');
-                  }}
-                  className="w-full bg-gradient-to-r from-blue-400 to-cyan-500 text-white font-black text-2xl py-8 rounded-3xl shadow-[0_8px_0_rgba(50,100,180,0.3)] active:shadow-none active:translate-y-2 transition-all flex flex-col items-center group"
-                >
-                  <div className="flex items-center gap-3 mb-1 group-hover:scale-110 transition-transform">
-                    <BookOpen size={32} className="animate-pulse" />
-                    <span>よみ</span>
-                  </div>
-                  <span className="text-sm font-bold bg-black/10 px-3 py-1 rounded-full">
-                    10問 よみトレーニング
-                  </span>
-                </button>
-
-                {/* かきボタン */}
-                <button
-                  onClick={() => {
-                    setTrainingMode('writing');
-                    setView('modeSelect');
-                  }}
-                  className="w-full bg-gradient-to-r from-orange-400 to-red-500 text-white font-black text-2xl py-8 rounded-3xl shadow-[0_8px_0_rgba(180,50,50,0.3)] active:shadow-none active:translate-y-2 transition-all flex flex-col items-center group"
-                >
-                  <div className="flex items-center gap-3 mb-1 group-hover:scale-110 transition-transform">
-                    <Pencil size={32} className="animate-pulse" />
-                    <span>かき</span>
-                  </div>
-                  <span className="text-sm font-bold bg-black/10 px-3 py-1 rounded-full">
-                    10問 かきトレーニング
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ========== モード選択画面 ========== */}
-        {view === 'modeSelect' && (
+          {/* ========== モード選択画面 ========== */}
+          {view === 'modeSelect' && (
           <div className="h-full bg-gradient-to-b from-purple-400 to-pink-500 p-6 flex flex-col">
             {/* 戻るボタン */}
             <button
@@ -764,8 +836,6 @@ function App() {
                   const char = getCharacterById(collected.characterId);
                   if (!char) return null;
 
-                  const canEvolveThis = canEvolve(char) && collected.evolutionLevel < 2;
-
                   return (
                     <button
                       key={collected.characterId}
@@ -775,13 +845,6 @@ function App() {
                       }}
                       className="bg-white rounded-2xl p-4 shadow-md hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex flex-col items-center gap-2 relative"
                     >
-                      {/* 進化可能バッジ */}
-                      {canEvolveThis && (
-                        <div className="absolute top-2 right-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-[10px] font-black px-2 py-1 rounded-full animate-pulse shadow-lg">
-                          しんか できる！
-                        </div>
-                      )}
-
                       {/* 最終形態バッジ */}
                       {collected.evolutionLevel === 2 && (
                         <div className="absolute top-2 left-2 text-2xl animate-bounce">
@@ -835,11 +898,7 @@ function App() {
           <div className="h-full bg-orange-50 p-6 flex flex-col relative">
             {/* 戻るボタン */}
             <button
-              onClick={() => {
-                if (window.confirm('練習をやめてホームに戻りますか？')) {
-                  setView('home');
-                }
-              }}
+              onClick={() => setShowExitTrainingConfirm(true)}
               className="absolute top-4 left-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
             >
               <ArrowRight size={20} className="rotate-180" />
@@ -981,11 +1040,7 @@ function App() {
           <div className="h-full bg-green-50 p-6 flex flex-col relative">
             {/* 戻るボタン */}
             <button
-              onClick={() => {
-                if (window.confirm('練習をやめてホームに戻りますか？')) {
-                  setView('home');
-                }
-              }}
+              onClick={() => setShowExitTrainingConfirm(true)}
               className="absolute top-4 left-4 z-10 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg text-gray-600 hover:text-gray-800 transition-all"
             >
               <ArrowRight size={20} className="rotate-180" />
@@ -1288,8 +1343,21 @@ function App() {
             <div className="flex-1 overflow-y-auto p-4">
               <div className="grid grid-cols-4 gap-3">
                 {CHARACTERS.map((char) => {
-                  const collected = collectedCharacters.find(c => c.characterId === char.id);
-                  const isOwned = !!collected;
+                  // このキャラクターが過去に所持されたことがあるかチェック
+                  // 進化チェーン内で現在または過去に所持されていた形態かどうか
+                  const chain = getEvolutionChain(char.baseCharacterId);
+                  const currentCollected = collectedCharacters.find(c =>
+                    chain.some(chainChar => chainChar.id === c.characterId)
+                  );
+
+                  // 現在このキャラクターを所持しているか、または過去に通過した形態か
+                  let isOwned = false;
+                  if (currentCollected) {
+                    const currentCharIndex = chain.findIndex(c => c.id === char.id);
+                    const ownedCharIndex = chain.findIndex(c => c.id === currentCollected.characterId);
+                    // 現在所持している形態、またはそれより前の形態は表示
+                    isOwned = currentCharIndex <= ownedCharIndex;
+                  }
                   return (
                     <button
                       key={char.id}
@@ -1448,9 +1516,24 @@ function App() {
                       if (cc) {
                         const date = new Date(cc.collectedAt);
                         return (
-                          <p className="text-xs text-gray-400 mt-4">
-                            ゲット日: {date.getMonth() + 1}/{date.getDate()}
-                          </p>
+                          <>
+                            <p className="text-xs text-gray-400 mt-4">
+                              ゲット日: {date.getMonth() + 1}/{date.getDate()}
+                            </p>
+
+                            {/* ごはんをあげるボタン */}
+                            <button
+                              onClick={() => {
+                                setSelectedCharacterForFeeding(selectedCharacterDetail.id);
+                                setSelectedCharacterDetail(null);
+                                setView('feeding');
+                              }}
+                              className="w-full mt-4 bg-gradient-to-r from-green-400 to-emerald-500 text-white font-bold text-lg py-3 rounded-2xl shadow-lg hover:scale-105 active:scale-95 transition-transform flex items-center justify-center gap-2"
+                            >
+                              <Apple size={24} />
+                              ごはんを あげる
+                            </button>
+                          </>
                         );
                       }
                       return null;
@@ -1990,6 +2073,42 @@ function App() {
           </div>
         )}
 
+        {/* ========== 餌やり確認モーダル ========== */}
+        {feedingConfirmation && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
+            <div className="bg-gradient-to-b from-blue-300 to-cyan-400 p-8 rounded-3xl shadow-2xl max-w-md mx-4 text-center animate-pop-in">
+              <h2 className="text-2xl font-black text-blue-900 mb-4">
+                ごはんを あげますか？
+              </h2>
+              <div className="bg-white p-4 rounded-2xl mb-4">
+                <div className="text-5xl mb-2">{feedingConfirmation.character.image}</div>
+                <div className="font-bold text-lg text-gray-800 mb-2">
+                  {feedingConfirmation.character.name}
+                </div>
+                <div className="text-3xl my-3">↓</div>
+                <div className="text-4xl mb-2">{feedingConfirmation.food.emoji}</div>
+                <div className="font-bold text-gray-700">
+                  {feedingConfirmation.food.name}
+                </div>
+              </div>
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={() => setFeedingConfirmation(null)}
+                  className="bg-gray-400 hover:bg-gray-500 text-white font-bold text-lg py-3 px-6 rounded-full transition-colors shadow-lg"
+                >
+                  やめる
+                </button>
+                <button
+                  onClick={confirmFeedCharacter}
+                  className="bg-green-500 hover:bg-green-600 text-white font-bold text-lg py-3 px-6 rounded-full transition-colors shadow-lg"
+                >
+                  あげる！
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ========== 餌やり結果モーダル ========== */}
         {showFeedingResult && selectedCharacterForFeeding && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
@@ -2023,7 +2142,40 @@ function App() {
             </div>
           </div>
         )}
-      </div>
+
+        {/* ========== 練習中断確認モーダル ========== */}
+        {showExitTrainingConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
+            <div className="bg-gradient-to-b from-red-300 to-pink-400 p-8 rounded-3xl shadow-2xl max-w-md mx-4 text-center animate-pop-in">
+              <h2 className="text-2xl font-black text-red-900 mb-4">
+                れんしゅうを やめますか？
+              </h2>
+              <p className="text-red-800 mb-6">
+                ホームに もどると<br />
+                いままでの きろくが<br />
+                のこらないよ
+              </p>
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={() => setShowExitTrainingConfirm(false)}
+                  className="bg-gray-400 hover:bg-gray-500 text-white font-bold text-lg py-3 px-6 rounded-full transition-colors shadow-lg"
+                >
+                  やめる
+                </button>
+                <button
+                  onClick={() => {
+                    setShowExitTrainingConfirm(false);
+                    setView('home');
+                  }}
+                  className="bg-red-500 hover:bg-red-600 text-white font-bold text-lg py-3 px-6 rounded-full transition-colors shadow-lg"
+                >
+                  ホームに もどる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
